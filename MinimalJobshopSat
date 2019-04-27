@@ -1,0 +1,261 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import com.google.ortools.sat.CpSolverStatus;
+import com.google.ortools.sat.CpModel;
+import com.google.ortools.sat.CpSolver;
+import com.google.ortools.sat.IntVar;
+import com.google.ortools.sat.IntervalVar;
+
+/**
+ * One common scheduling problem is the job shop, in which multiple jobs are
+ * processed on several machines. Each job consists of a sequence of tasks,
+ * which must be performed in a given order, and each task must be processed on
+ * a specific machine. For example, the job could be the manufacture of a single
+ * consumer item, such as an automobile. The problem is to schedule the tasks on
+ * the machines so as to minimize the length of the schedule—the time it takes
+ * for all the jobs to be completed.
+ * 
+ * There are several constraints for the job shop problem:
+ * 
+ * 1) No task for a job can be started until the previous task for that job is
+ * completed. 
+ * 2) A machine can only work on one task at a time. 
+ * 3) A task, once started, must run to completion.
+ * 
+ * 
+ * 
+ * @author dimitarbakardzhiev
+ *
+ */
+public class MinimalJobshopSat {
+
+    static {
+	System.loadLibrary("jniortools");
+    }
+	
+    public static void main(String[] args) throws Exception {
+
+	
+	class TaskType {
+
+	    IntVar start;
+	    IntVar end;
+	    IntervalVar interval;
+	    
+	    public TaskType(IntVar start, IntVar end, IntervalVar interval) {
+		super();
+		this.start = start;
+		this.end = end;
+		this.interval = interval;
+	    }
+
+	}
+	
+
+	class AssignedTaskType {
+
+	    long start;
+	    long duration;
+	    int job;
+	    int task;
+	    
+	    
+	    public long getStart() {
+	        return start;
+	    }
+
+	    
+	    public long getEnd(){
+		return start+duration;
+	    }
+	}
+	
+	    
+	// create the model
+	CpModel model = new CpModel();
+
+	int jobsData[][][] = { // task = (machine id, processing time).
+		{ 
+		    { 0, 3 }, // task0
+		    { 1, 2 }, // task1
+		    { 2, 2 }  // task2
+		}, // Job0
+		{ 
+		    { 0, 2 }, 
+		    { 2, 1 }, 
+		    { 1, 4 } 
+		}, // Job1
+		{ 
+		    { 1, 4 }, 
+		    { 2, 3 } 
+		} // job2;
+	};
+
+	int machinesCount = 1 + Arrays.stream(jobsData).flatMap(job -> Arrays.stream(job)).map(task -> task[0])
+		.max(Integer::compare).get();
+
+	int allMachines[] = IntStream.range(0, machinesCount).toArray();
+
+	int jobsCount = jobsData.length;
+
+	int allJobs[] = IntStream.range(0, jobsCount).toArray();
+
+	// Compute horizon.
+
+	int horizon = Arrays.stream(jobsData).flatMap(job -> Arrays.stream(job)).map(task -> task[1])
+		.mapToInt(Integer::valueOf).sum();
+	
+	// create jobs
+	
+	List<List<TaskType>> allTasks = new ArrayList<List<TaskType>>();
+	
+	for (int jobId=0; jobId < allJobs.length; jobId++){
+	    
+	    List<TaskType> jobTasks = new ArrayList<TaskType>();
+	    allTasks.add(jobTasks);
+	    
+	    for (int taskId = 0; taskId < jobsData[jobId].length; taskId++ ){
+		
+		int[] task = jobsData[jobId][taskId];
+		
+		IntVar startVar = model.newIntVar(0, horizon, String.format("start_%s_%s", jobId,taskId )) ;
+
+		IntVar endVar = model.newIntVar(0, horizon, String.format("end_%s_%s", jobId, taskId));
+
+		int duration = task[1];
+
+		IntervalVar intervalVar = model.newIntervalVar(startVar, duration, endVar, String.format("interval_%s_%s", jobId, taskId));
+
+		jobTasks.add(new TaskType(startVar, endVar, intervalVar)); 
+	    }
+	}
+	
+	// Create and add disjunctive constraints.
+	
+	for(int machineId=0; machineId< allMachines.length; machineId++){
+
+	    List<IntervalVar> intervals = new ArrayList<IntervalVar>();
+	    
+	    for (int jobId=0; jobId < allJobs.length; jobId++){
+		
+		List<TaskType> jobTasks = allTasks.get(jobId);
+		
+		for (int taskId = 0; taskId < jobsData[jobId].length; taskId++) {
+		    int[] task = jobsData[jobId][taskId];
+
+		    if (task[0] == machineId) {
+			intervals.add(jobTasks.get(taskId).interval);
+		    }
+		}
+		    
+	    }
+
+	    model.addNoOverlap(intervals.toArray(new IntervalVar[0]));
+
+	}
+	
+	// Add precedence constraints.
+	
+	for (int jobId=0; jobId < allJobs.length; jobId++){
+	    
+	    List<TaskType> jobTasks = allTasks.get(jobId);
+	    
+	    for (int taskId = 0; taskId < (jobTasks.size() -1) ; taskId++ ){
+		
+		model.addLessOrEqual( jobTasks.get(taskId).end, jobTasks.get(taskId+1).start);
+	    }
+	    
+	}
+	
+	
+	//  Makespan objective
+	
+	List<IntVar> jobsEndTimes = allTasks.stream().flatMap(Collection::stream).map(task -> task.end).collect(Collectors.toList());
+
+	// value is the maximum of the end times for all jobs —that is, the makespan.
+	IntVar objective = model.newIntVar(0, horizon, "makespan");
+	
+	model.addMaxEquality(objective, jobsEndTimes.toArray(new IntVar[0]));
+	
+	model.minimize(objective);
+
+	// Solve model
+	CpSolver solver = new CpSolver();
+	CpSolverStatus status = solver.solve(model);
+	
+	
+	System.out.println("Status: " + status +"\n");
+
+	if (status == CpSolverStatus.OPTIMAL) {
+	    System.out.println("Optimal Schedule Length: " + solver.objectiveValue() + "\n");
+
+	    // Create one list of assigned tasks per machine.
+	    
+	    Map<Integer,List<AssignedTaskType>> assignedJobs= new HashMap<Integer,List<AssignedTaskType>>();
+		
+	    for( int machineId: allMachines){
+
+		assignedJobs.put(Integer.valueOf(machineId), new ArrayList<AssignedTaskType>());
+
+	    }
+		
+	    for (int jobId=0; jobId < allJobs.length; jobId++){
+		
+		List<TaskType> jobTasks = allTasks.get(jobId);
+		
+		for (int taskId = 0; taskId < jobsData[jobId].length; taskId++) {
+		    
+		   int[] task = jobsData[jobId][taskId];
+
+		   int machineId = task[0];
+		   
+		   AssignedTaskType assignedTask = new AssignedTaskType();
+		   
+		   assignedTask.start = solver.value(jobTasks.get(taskId).start);
+		   assignedTask.duration = task[1];
+		   assignedTask.job = jobId;
+		   assignedTask.task = taskId;
+	   
+		   assignedJobs.get(machineId).add(assignedTask);
+		   
+		}
+		    
+	    }
+	    
+	    // sort the tasks by their start time
+	    assignedJobs.entrySet().stream().map(e -> e.getValue()).forEach(v ->v.sort(Comparator.comparing(AssignedTaskType::getStart)));
+	    
+	    System.out.println("\n Optimal Schedule \n");
+	    
+	    for(Map.Entry<Integer, List<AssignedTaskType>> e : assignedJobs.entrySet()){
+		StringBuilder x= new StringBuilder("Machine "+ e.getKey()+": ");
+		for(AssignedTaskType task : e.getValue()){
+		    x.append("job_"+ task.job +"_"+ task.task+"    ");
+		}
+		System.out.println(x);
+	    }
+	    
+	    System.out.println("\n Task Time Intervals \n");
+	    
+	    for(Map.Entry<Integer, List<AssignedTaskType>> e : assignedJobs.entrySet()){
+		StringBuilder x= new StringBuilder("Machine "+ e.getKey()+": ");
+		for(AssignedTaskType task : e.getValue()){
+		    x.append("["+ task.getStart() +","+task.getEnd()+"]"+"   ");
+		}
+		    
+		System.out.println(x);
+	    }
+	    
+	}
+	
+	
+    }
+}
