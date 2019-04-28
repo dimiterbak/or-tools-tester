@@ -1,0 +1,371 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
+import com.google.ortools.sat.CpSolverStatus;
+import com.google.ortools.sat.CpModel;
+import com.google.ortools.sat.CpSolver;
+import com.google.ortools.sat.IntVar;
+import com.google.ortools.sat.IntervalVar;
+
+/**
+ * One common scheduling problem is the job shop (JSP), in which multiple jobs are
+ * processed on several machines. Each job consists of a sequence of tasks,
+ * which must be performed in a given order, and each task must be processed on
+ * a specific machine. For example, the job could be the manufacture of a single
+ * consumer item, such as an automobile. The problem is to schedule the tasks on
+ * the machines so as to minimize the length of the schedule—the time it takes
+ * for all the jobs to be completed.
+ * 
+ * There are several constraints for the job shop problem:
+ * 
+ * 1) No task for a job can be started until the previous task for that job is
+ * completed. 
+ * 2) A machine can only work on one task at a time. 
+ * 3) A task, once started, must run to completion.
+ * 
+ * The flexible job shop problem (FJSP) is an extension of the job shop problem
+ * (JSP) where is assumed that there is often more than one machine that is able to
+ * process a particular task.
+ * 
+ * The FJSP can be decomposed into two sub-problems: 
+ * the machine selection problem (MS) and the operations sequencing problem (OS). 
+ * 
+ * 
+ * @author Dimitar Bakardzhiev
+ *
+ */
+public class FlexibleJobshopProblem {
+
+    private static final int MACHINE_INDEX = 1;
+    private static final int DURATION_INDEX = 0;
+
+    static {
+	System.loadLibrary("jniortools");
+    }
+	
+    public static void main(String[] args) throws Exception {
+
+	
+	class TaskType {
+
+	    IntVar start;
+	    IntVar end;
+
+	    
+	    public TaskType(IntVar start, IntVar end, IntVar[] altPresences) {
+		super();
+		this.start = start;
+		this.end = end;
+		this.altPresences = altPresences;
+	    }
+	    
+	    IntVar[] altPresences;
+	}
+	
+
+	class AssignedTaskType {
+
+	    long start;
+	    long duration;
+	    int job;
+	    int task;
+	    
+	    
+	    public long getStart() {
+	        return start;
+	    }
+
+	    
+	    public long getEnd(){
+		return start+duration;
+	    }
+	}
+	
+	    
+	// create the model
+	CpModel model = new CpModel();
+
+	int jobsData[][][][] = {
+		{ 
+		    { 
+			{ 3, 0 }, //alternative0 (processing time, machineId)
+			{ 1, 1 }, //alternative1 (processing time, machineId)
+			{ 5, 2 }  //alternative2 (processing time, machineId)
+		    },//task0 
+		    { 
+			{ 2, 0 }, 
+			{ 4, 1 }, 
+			{ 6, 2 } 
+		    },//task1
+		    { 
+			{ 2, 0 }, 
+        			{ 3, 1 }, 
+        			{ 1, 2 }
+        		    } //task2
+		}, // job0
+		{ 
+		    { 
+			{ 2, 0 }, 
+			{ 3, 1 }, 
+			{ 4, 2 } 
+		    }, 
+		    { 
+			{ 1, 0 }, 
+			{ 5, 1 }, 
+			{ 4, 2 } 
+		    },
+		    { 
+			{ 2, 0 }, 
+			{ 1, 1 }, 
+			{ 4, 2 } 
+		    } 
+		},//job1
+		{ 
+		    { 
+			{ 2, 0 }, 
+			{ 1, 1 }, 
+			{ 4, 2 } 
+		    }, 
+		    { 
+			{ 2, 0 }, 
+			{ 3, 1 }, 
+			{ 4, 2 } 
+		    },
+		    { 
+			{ 3, 0 }, 
+			{ 1, 1 }, 
+			{ 5, 2 } 
+		    } 
+		} // job2
+	};
+
+	int machinesCount = Arrays.stream(jobsData)
+		.flatMap(jobs -> Arrays.stream(jobs))
+		.map(task -> task.length)
+		.max(Integer::compare).get();
+	
+	System.out.println("machines count = "+machinesCount);
+
+	int allMachines[] = IntStream.range(0, machinesCount).toArray();
+
+	int jobsCount = jobsData.length;
+
+	// Compute horizon.
+
+	int horizon = Arrays.stream(jobsData)
+	.flatMap(jobs -> Arrays.stream(jobs))
+	.map(task -> Arrays.stream(task)
+		.mapToInt(alternative -> Stream.of(alternative[DURATION_INDEX])
+			.max(Integer::compare)
+			.get())
+		.map(a->a)
+		.max()
+		.getAsInt())
+	.mapToInt(Integer::valueOf).sum();
+	
+	System.out.println("horizon = "+horizon);
+	
+	// Global storage of variables.
+	Map<Integer,List<IntervalVar>> intervalsPerResource = new HashMap<Integer,List<IntervalVar>>();
+	
+	// Scan the jobs and create the relevant variables and intervals.
+	
+	List<List<TaskType>> allTasks = new ArrayList<List<TaskType>>();
+	
+	for (int jobId=0; jobId < jobsCount; jobId++){
+	    
+	    List<TaskType> jobTasks = new ArrayList<TaskType>();
+	    allTasks.add(jobTasks);
+	    
+	    int numTasks = jobsData[jobId].length;
+
+	    for (int taskId = 0; taskId < numTasks; taskId++ ){
+
+		int[][] task = jobsData[jobId][taskId];
+		
+		int minDuration = Arrays.stream(task).map(alternative -> alternative[DURATION_INDEX]).min(Integer::compare).get();
+
+		int maxDuration = Arrays.stream(task).map(alternative -> alternative[DURATION_INDEX]).max(Integer::compare).get();
+	
+		IntVar startVar = model.newIntVar(0, horizon, String.format("start_j%s_t%s", jobId,taskId )) ;
+
+		IntVar endVar = model.newIntVar(0, horizon, String.format("end_j%s_t%s", jobId, taskId));
+
+		IntVar duration = model.newIntVar(minDuration, maxDuration, String.format("duration_j%s_t%s", jobId, taskId)); //task[1];
+
+		IntervalVar intervalVar = model.newIntervalVar(startVar, duration, endVar, String.format("interval_j%s_t%s", jobId, taskId));
+
+		int numAlternatives = task.length;
+
+		IntVar[] altPresences = new IntVar[numAlternatives];
+
+		for (int altId = 0; altId < numAlternatives; altId++) {
+
+		    IntVar altPresence = model.newBoolVar(String.format("presence_j%s_t%s_a%s", jobId, taskId, altId));
+
+		    IntVar altStart = model.newIntVar(0, horizon,
+			    String.format("start_j%s_t%s_a%s", jobId, taskId, altId));
+
+		    int altDuration = task[altId][DURATION_INDEX];
+
+		    IntVar altEnd = model.newIntVar(0, horizon, String.format("end_j%s_t%s_a%s", jobId, taskId, altId));
+
+		    IntervalVar altInterval = model.newOptionalIntervalVar(altStart, altDuration, altEnd, altPresence,
+			    String.format("interval_j%s_t%s_a%s", jobId, taskId, altId));
+
+		    altPresences[altId] = altPresence;
+
+		    // Link the master variables with the local ones.
+
+		    model.addEquality(startVar, altStart).onlyEnforceIf(altPresence);
+		    model.addEquality(duration, altDuration).onlyEnforceIf(altPresence);
+		    model.addEquality(endVar, altEnd).onlyEnforceIf(altPresence);
+
+		    // Add the local interval to the right machine.
+		    int machineId = task[altId][MACHINE_INDEX];
+		    
+		    if (!intervalsPerResource.containsKey(machineId)) {
+
+			List<IntervalVar> intervals = new ArrayList<IntervalVar>();
+			intervalsPerResource.put(machineId, intervals);
+		    }
+
+		    intervalsPerResource.get(machineId).add(altInterval);
+
+		}
+
+		// Store the presences for the solution
+		jobTasks.add(new TaskType(startVar, endVar, altPresences)); 
+
+		// Select exactly one presence variable.
+		model.addLinearSumEqual(altPresences, 1);
+
+	    }
+	    
+	}
+	
+	// Create and add disjunctive constraints.(no overlap constraints), 
+	// which prevent tasks for the same machine from overlapping in time.
+	
+	for(int machineId=0; machineId< machinesCount; machineId++){
+
+	    List<IntervalVar> intervals = intervalsPerResource.get(machineId);
+	    
+	    if(intervals.size() > 0){
+
+		model.addNoOverlap(intervals.toArray(new IntervalVar[intervals.size()]));
+	    }
+	}
+	
+	// Add precedence constraints.which prevent consecutive tasks for the same job from overlapping in time.
+	
+	for (int jobId=0; jobId < jobsCount; jobId++){
+	    
+	    List<TaskType> jobTasks = allTasks.get(jobId);
+	    
+	    for (int taskId = 0; taskId < (jobTasks.size() -1) ; taskId++ ){
+		
+		model.addLessOrEqual( jobTasks.get(taskId).end, jobTasks.get(taskId+1).start);
+	    }
+	    
+	}
+	
+	
+	//  Makespan objective
+	
+	List<IntVar> jobsEndTimes = allTasks.stream().flatMap(Collection::stream).map(task -> task.end).collect(Collectors.toList());
+
+	// value is the maximum of the end times for all jobs —that is, the makespan.
+	IntVar objective = model.newIntVar(0, horizon, "makespan");
+	
+	model.addMaxEquality(objective, jobsEndTimes.toArray(new IntVar[jobsEndTimes.size()]));
+	
+	model.minimize(objective);
+
+	// Solve model
+	CpSolver solver = new CpSolver();
+	CpSolverStatus status = solver.solve(model);
+	
+	
+	System.out.println("Status: " + status +"\n");
+
+	if (status == CpSolverStatus.OPTIMAL) {
+	    System.out.println("Optimal Schedule Length: " + solver.objectiveValue() + "\n");
+
+	    // Create one list of assigned tasks per machine.
+	    
+	    Map<Integer,List<AssignedTaskType>> assignedJobs= new HashMap<Integer,List<AssignedTaskType>>();
+		
+	    for( int machineId: allMachines){
+
+		assignedJobs.put(Integer.valueOf(machineId), new ArrayList<AssignedTaskType>());
+
+	    }
+		
+	    for (int jobId=0; jobId < jobsCount; jobId++){
+		
+		List<TaskType> jobTasks = allTasks.get(jobId);
+		
+		for (int taskId = 0; taskId < jobsData[jobId].length; taskId++) {
+		    
+		   int[][] task = jobsData[jobId][taskId];
+
+		    int numAlternatives = task.length;
+
+		    for (int altId = 0; altId < numAlternatives; altId++) {
+
+			if (solver.value(jobTasks.get(taskId).altPresences[altId]) == 1) {
+			    int machineId = task[altId][MACHINE_INDEX];
+
+			    AssignedTaskType assignedTask = new AssignedTaskType();
+
+			    assignedTask.start = solver.value(jobTasks.get(taskId).start);
+			    assignedTask.duration = task[altId][0];
+			    assignedTask.job = jobId;
+			    assignedTask.task = taskId;
+
+			    assignedJobs.get(machineId).add(assignedTask);
+			}
+		    }
+		   
+		}
+		    
+	    }
+	    
+	    // sort the tasks by their start time
+	    assignedJobs.entrySet().stream().map(e -> e.getValue()).forEach(v ->v.sort(Comparator.comparing(AssignedTaskType::getStart)));
+	    
+	    System.out.println("\n Optimal Schedule \n");
+	    
+	    for(Map.Entry<Integer, List<AssignedTaskType>> e : assignedJobs.entrySet()){
+		StringBuilder x= new StringBuilder("Machine "+ e.getKey()+": ");
+		for(AssignedTaskType task : e.getValue()){
+		    x.append("job_"+ task.job +"_"+ task.task+"    ");
+		}
+		System.out.println(x);
+	    }
+	    
+	    System.out.println("\n Task Time Intervals \n");
+	    
+	    for(Map.Entry<Integer, List<AssignedTaskType>> e : assignedJobs.entrySet()){
+		StringBuilder x= new StringBuilder("Machine "+ e.getKey()+": ");
+		for(AssignedTaskType task : e.getValue()){
+		    x.append("["+ task.getStart() +","+task.getEnd()+"]"+"      ");
+		}
+		    
+		System.out.println(x);
+	    }
+	    
+	}
+	
+	
+    }
+}
