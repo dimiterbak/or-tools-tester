@@ -14,6 +14,7 @@ import com.google.ortools.sat.CpModel;
 import com.google.ortools.sat.CpSolver;
 import com.google.ortools.sat.IntVar;
 import com.google.ortools.sat.IntervalVar;
+import com.google.ortools.sat.LinearExpr;
 
 /**
  * One common scheduling problem is the job shop, in which multiple jobs are
@@ -96,7 +97,57 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 	    
 	// create the model
 	CpModel model = new CpModel();
-
+//
+//	int jobsData[][][][] = {
+//		{ 
+//		    { 
+//			{ 3, 0 }, //alternative0 (processing time, machineId)
+//			{ 3, 1 }, //alternative1 (processing time, machineId)
+//			{ 3, 2 }  //alternative2 (processing time, machineId)
+//		    },//task0 
+//		    { 
+//			{ 2, 0 }, 
+//			{ 2, 1 }, 
+//			{ 2, 2 } 
+//		    },//task1
+//		    { 
+//			{ 3, 0 }, 
+//        			{ 3, 1 }, 
+//        			{ 3, 2 }
+//        		    },//task2
+//		    { 
+//			{ 4, 0 }, 
+//			{ 4, 1 }, 
+//			{ 4, 2 } 
+//		    }, //task3
+//		    { 
+//			{ 5, 0 }, 
+//			{ 5, 1 }, 
+//			{ 5, 2 } 
+//		    },//task04
+//		    { 
+//			{ 2, 0 }, 
+//			{ 2, 1 }, 
+//			{ 2, 2 } 
+//		    }, //task5
+//		    { 
+//			{ 3, 0 }, 
+//			{ 3, 1 }, 
+//			{ 3, 2 } 
+//		    }, //task6
+//		    { 
+//			{ 4, 0 }, 
+//			{ 4, 1 }, 
+//			{ 4, 2 } 
+//		    },//task7
+//		    { 
+//			{ 3, 0 }, 
+//			{ 3, 1 }, 
+//			{ 3, 2 } 
+//		    } //task8
+//		} // job0
+//	};
+	
 	int jobsData[][][][] = {
 		{ 
 		    { 
@@ -104,48 +155,65 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 			{ 3, 1 }, //alternative1 (processing time, machineId)
 			{ 3, 2 }  //alternative2 (processing time, machineId)
 		    },//task0 
+		}, // job0
+		{ 
 		    { 
 			{ 2, 0 }, 
 			{ 2, 1 }, 
 			{ 2, 2 } 
 		    },//task1
+		}, // job1
+		{ 
 		    { 
 			{ 3, 0 }, 
         			{ 3, 1 }, 
         			{ 3, 2 }
-        		    }, //task2
+        		    } //task2
+		}, // job2
+		{ 
 		    { 
 			{ 4, 0 }, 
 			{ 4, 1 }, 
 			{ 4, 2 } 
-		    }, //task3
+		    }, 
+		}, // job3
+		{ 
 		    { 
 			{ 5, 0 }, 
 			{ 5, 1 }, 
 			{ 5, 2 } 
-		    },//task04
+		    },
+		}, // job4
+		{ 
 		    { 
 			{ 2, 0 }, 
 			{ 2, 1 }, 
 			{ 2, 2 } 
-		    }, //task5
+		    } 
+		},//job5
+		{ 
 		    { 
 			{ 3, 0 }, 
 			{ 3, 1 }, 
 			{ 3, 2 } 
-		    }, //task6
+		    }, 
+		}, // job6
+		{ 
 		    { 
 			{ 4, 0 }, 
 			{ 4, 1 }, 
 			{ 4, 2 } 
-		    },//task7
+		    },
+		}, // job7
+		{ 
 		    { 
-			{ 3, 0 }, 
-			{ 3, 1 }, 
-			{ 3, 2 } 
-		    } //task8
-		} // job0
+			{ 5, 0 }, 
+			{ 5, 1 }, 
+			{ 5, 2 } 
+		    } 
+		} // job8
 	};
+
 
 	int machinesCount = Arrays.stream(jobsData)
 		.flatMap(jobs -> Arrays.stream(jobs))
@@ -157,6 +225,8 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 	int allMachines[] = IntStream.range(0, machinesCount).toArray();
 
 	int jobsCount = jobsData.length;
+	
+	System.out.println("jobsCount = "+jobsCount);
 
 	// Compute horizon.
 
@@ -189,12 +259,16 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 
 	    for (int taskId = 0; taskId < numTasks; taskId++ ){
 
+		System.out.println("taskId = " + taskId);
 		int[][] task = jobsData[jobId][taskId];
 		
 		int minDuration = Arrays.stream(task).map(alternative -> alternative[DURATION_INDEX]).min(Integer::compare).get();
 
 		int maxDuration = Arrays.stream(task).map(alternative -> alternative[DURATION_INDEX]).max(Integer::compare).get();
 	
+		System.out.println("minDuration = " + minDuration);
+		System.out.println("maxDuration = " + maxDuration);
+		
 		IntVar startVar = model.newIntVar(0, horizon, String.format("start_j%s_t%s", jobId,taskId )) ;
 
 		IntVar endVar = model.newIntVar(0, horizon, String.format("end_j%s_t%s", jobId, taskId));
@@ -246,7 +320,7 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 		jobTasks.add(new TaskType(startVar, endVar, altPresences)); 
 
 		// Select exactly one presence variable.
-		model.addLinearSumEqual(altPresences, 1);
+		model.addEquality(LinearExpr.sum(altPresences), 1);
 
 	    }
 	    
@@ -271,7 +345,9 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 	    
 	    List<TaskType> jobTasks = allTasks.get(jobId);
 	    
-	    for (int taskId = 0; taskId < (jobTasks.size() -1) ; taskId++ ){
+	    int tasksCount = jobTasks.size();
+	    
+	    for (int taskId = 0; taskId < (tasksCount -1) ; taskId++ ){
 		
 		model.addLessOrEqual( jobTasks.get(taskId).end, jobTasks.get(taskId+1).start);
 	    }
@@ -283,7 +359,7 @@ public class JobshopSatWithrOneJobMultiPurposeMachines {
 	
 	List<IntVar> jobsEndTimes = allTasks.stream().flatMap(Collection::stream).map(task -> task.end).collect(Collectors.toList());
 
-	// value is the maximum of the end times for all jobs —that is, the makespan.
+	// value is the maximum of the end times for all jobs — that is, the makespan.
 	IntVar objective = model.newIntVar(0, horizon, "makespan");
 	
 	model.addMaxEquality(objective, jobsEndTimes.toArray(new IntVar[jobsEndTimes.size()]));
