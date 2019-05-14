@@ -14,6 +14,7 @@ import com.google.ortools.sat.CpModel;
 import com.google.ortools.sat.CpSolver;
 import com.google.ortools.sat.IntVar;
 import com.google.ortools.sat.IntervalVar;
+import com.google.ortools.sat.LinearExpr;
 
 /**
  * One common scheduling problem is the job shop (JSP), in which multiple jobs are
@@ -246,7 +247,7 @@ public class FlexibleJobshopProblem {
 		jobTasks.add(new TaskType(startVar, endVar, altPresences)); 
 
 		// Select exactly one presence variable.
-		model.addLinearSumEqual(altPresences, 1);
+		model.addEquality(LinearExpr.sum(altPresences), 1);
 
 	    }
 	    
